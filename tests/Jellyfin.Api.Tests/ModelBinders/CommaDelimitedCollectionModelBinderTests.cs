@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Threading.Tasks;
 using Jellyfin.Api.ModelBinders;
+using MediaBrowser.Model.Querying;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using Moq;
@@ -225,6 +227,37 @@ namespace Jellyfin.Api.Tests.ModelBinders
             var listResult = (IReadOnlyList<TestType>?)bindingContextMock.Object.Result.Model;
             Assert.NotNull(listResult);
             Assert.Single(listResult);
+        }
+
+        [Fact]
+        public async Task BindModelAsync_ItemFieldsQuery_IgnoresUnknownLegacyFieldsWithoutLoggingExceptions()
+        {
+            const string queryParamName = "fields";
+            const string queryParamString = "Overview,PremiereDate,UserData,RunTimeTicks,ProductionYear,ParentIndexNumber,OfficialRating,IndexNumber";
+            var logger = new Mock<ILogger<CommaDelimitedCollectionModelBinder>>();
+            var modelBinder = new CommaDelimitedCollectionModelBinder(logger.Object);
+            var valueProvider = new QueryStringValueProvider(
+                    new BindingSource(string.Empty, string.Empty, false, false),
+                    new QueryCollection(new Dictionary<string, StringValues> { { queryParamName, new StringValues(queryParamString) } }),
+                    CultureInfo.InvariantCulture);
+            var bindingContextMock = new Mock<ModelBindingContext>();
+            bindingContextMock.Setup(b => b.ValueProvider).Returns(valueProvider);
+            bindingContextMock.Setup(b => b.ModelName).Returns(queryParamName);
+            bindingContextMock.Setup(b => b.ModelType).Returns(typeof(ItemFields[]));
+            bindingContextMock.SetupProperty(b => b.Result);
+
+            await modelBinder.BindModelAsync(bindingContextMock.Object);
+
+            Assert.True(bindingContextMock.Object.Result.IsModelSet);
+            Assert.Equal(new[] { ItemFields.Overview }, (ItemFields[])bindingContextMock.Object.Result.Model!);
+            logger.Verify(
+                x => x.Log(
+                    LogLevel.Debug,
+                    It.IsAny<EventId>(),
+                    It.IsAny<It.IsAnyType>(),
+                    It.IsAny<Exception?>(),
+                    It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+                Times.Never);
         }
     }
 }
